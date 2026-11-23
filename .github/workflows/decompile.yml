@@ -1,0 +1,119 @@
+name: Decompile levipack
+
+# Simpan file ini sebagai: .github/workflows/decompile.yml
+# Upload file .levipack ke root repo (pakai repo PRIVATE), lalu:
+# tab Actions -> "Decompile levipack" -> Run workflow.
+# Hasil ada di bagian "Artifacts" di halaman run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      levipack:
+        description: "Nama file .levipack di root repo"
+        required: true
+        default: "webscreen-1_0_51.levipack"
+      run_ghidra:
+        description: "Decompile .so pakai Ghidra (lambat, 20-60 menit)"
+        type: boolean
+        default: true
+
+jobs:
+  decompile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Unzip levipack
+        run: |
+          mkdir -p work/pack out
+          unzip -o "${{ inputs.levipack }}" -d work/pack
+          ls -la work/pack
+          cp work/pack/manifest.json out/
+
+      - name: Extract embedded DEX (kode Java di dalam .so)
+        run: |
+          python3 - <<'PY'
+          import struct
+          d = open("work/pack/webscreen.so", "rb").read()
+          i = 0
+          n = 0
+          while True:
+              i = d.find(b"dex\n0", i)
+              if i < 0:
+                  break
+              sz = struct.unpack("<I", d[i+32:i+36])[0]
+              if 0x70 <= sz <= len(d) - i and d[i+7] == 0:
+                  open(f"work/emb{n}.dex", "wb").write(d[i:i+sz])
+                  print("dex", n, "offset", i, "size", sz)
+                  n += 1
+              i += 1
+          PY
+          ls -la work
+
+      - name: Install jadx
+        run: |
+          wget -q https://github.com/skylot/jadx/releases/download/v1.5.0/jadx-1.5.0.zip
+          unzip -q jadx-1.5.0.zip -d jadx
+
+      - name: Decompile DEX ke Java
+        run: |
+          for f in work/emb*.dex; do
+            ./jadx/bin/jadx --show-bad-code -d "out/java_$(basename "$f" .dex)" "$f" || true
+          done
+
+      - name: Disassembly .so (objdump) + strings
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils-aarch64-linux-gnu
+          aarch64-linux-gnu-objdump -d -C work/pack/webscreen.so > out/webscreen.asm.txt || true
+          aarch64-linux-gnu-readelf -sW work/pack/webscreen.so > out/symbols.txt || true
+          strings -n 5 work/pack/webscreen.so > out/strings.txt
+
+      - name: Install Ghidra
+        if: ${{ inputs.run_ghidra }}
+        run: |
+          wget -q https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.2.1_build/ghidra_11.2.1_PUBLIC_20241105.zip
+          unzip -q ghidra_11.2.1_PUBLIC_20241105.zip -d ghidra
+
+      - name: Decompile .so dengan Ghidra (headless)
+        if: ${{ inputs.run_ghidra }}
+        run: |
+          mkdir -p ghidra_scripts ghidra_proj
+          cat > ghidra_scripts/DumpDecomp.py <<'PY'
+          # @category WS
+          from ghidra.app.decompiler import DecompInterface
+          from ghidra.util.task import ConsoleTaskMonitor
+          di = DecompInterface()
+          di.openProgram(currentProgram)
+          mon = ConsoleTaskMonitor()
+          out = open("/tmp/decomp.c", "w")
+          skip = ("_ZNSt", "_ZSt", "_ZNKSt", "__cxa", "_ZTv", "_ZdlPv", "_Znwm")
+          for f in currentProgram.getFunctionManager().getFunctions(True):
+              n = f.getName()
+              if f.isThunk() or n.startswith(skip):
+                  continue
+              r = di.decompileFunction(f, 20, mon)
+              if r.decompileCompleted():
+                  out.write("// %s @ %s\n" % (n, f.getEntryPoint()))
+                  out.write(r.getDecompiledFunction().getC() + "\n")
+          out.close()
+          PY
+          ./ghidra/ghidra_11.2.1_PUBLIC/support/analyzeHeadless \
+            ghidra_proj ws \
+            -import work/pack/webscreen.so \
+            -scriptPath ghidra_scripts \
+            -postScript DumpDecomp.py \
+            -deleteProject || true
+          cp /tmp/decomp.c out/webscreen.decompiled.c || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decompiled-webscreen
+          path: out/
+          
