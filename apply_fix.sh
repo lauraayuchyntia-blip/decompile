@@ -2,15 +2,14 @@
 # ============================================================
 # WebScreen 1.0.51 — Lag Fix untuk HP Low-End (Helio G25/G35)
 # Tested: Infinix Hot 9 Play
+# Fix v2: tambah flag ws_nomulti untuk hemat RAM saat video
 # ============================================================
 
-# Path utama dari hasil decompile native .so
 BASE="/storage/emulated/0/Android/data/org.levimc.launcher/files"
 
-echo "=== WebScreen Lag Fix ==="
+echo "=== WebScreen Lag Fix v2 ==="
 echo ""
 
-# Cek apakah folder ada
 if [ ! -d "$BASE" ]; then
   echo "ERROR: Folder $BASE tidak ditemukan."
   echo "Pastikan LeviMC Launcher sudah diinstall dan dijalankan minimal sekali."
@@ -21,16 +20,37 @@ echo "Folder config: $BASE"
 echo ""
 
 # FIX 1: Software render mode
-# Efek: matikan lockHardwareCanvas() yang blok GPU di Helio G25/G35
-# Trade-off: render WebView sedikit lebih lambat tapi TIDAK lag Minecraft
+# Matiin lockHardwareCanvas() — cegah GPU stall di Helio G25/G35
 if touch "$BASE/ws_sw" 2>/dev/null; then
-  echo "[OK] ws_sw — Software render aktif (hilangkan hardware canvas stall)"
+  echo "[OK] ws_sw — Software render aktif (cegah GPU freeze)"
 else
-  echo "[GAGAL] Tidak bisa buat $BASE/ws_sw — coba jalankan sebagai root atau pakai file manager"
+  echo "[GAGAL] ws_sw — coba jalankan sebagai root atau pakai file manager"
+fi
+
+# FIX 2: Nonaktifkan multi-window WebView
+# Hemat RAM ~50-80MB, kurangi context switching saat video/game jalan
+if touch "$BASE/ws_nomulti" 2>/dev/null; then
+  echo "[OK] ws_nomulti — Multi-window mati (hemat RAM untuk video/game)"
+else
+  echo "[GAGAL] ws_nomulti"
 fi
 
 echo ""
-echo "=== Selesai ==="
-echo "Restart Minecraft untuk efek."
+echo "=== Tips Penggunaan (PENTING untuk video/game) ==="
 echo ""
-echo "Mau balik ke hardware mode? Hapus file: $BASE/ws_sw"
+echo "Karena Helio G25/G35 cuma punya 1 hardware video decoder:"
+echo ""
+echo "  1. Sebelum buka WebScreen: tutup semua app lain dulu"
+echo "  2. Untuk video YouTube: pilih kualitas 360p atau 480p"
+echo "     (klik Settings di YouTube > Quality > 360p)"
+echo "  3. Untuk browser game: matikan suara Minecraft dulu"
+echo "     (Settings > Audio > matiin Music dan Sound)"
+echo "  4. Kalau masih freeze: tunggu 2-3 detik, audio tetap jalan"
+echo "     itu normal — Helio G25 lagi nge-decode frame video"
+echo ""
+echo "=== Selesai ==="
+echo "Restart Minecraft untuk efek fix."
+echo ""
+echo "Mau reset? Hapus file-file ini:"
+echo "  rm $BASE/ws_sw"
+echo "  rm $BASE/ws_nomulti"
